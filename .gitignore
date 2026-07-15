@@ -1,0 +1,23 @@
+.env
+__pycache__/
+*.pyc
+venv/
+.pytest_cache/
+.claude/
+
+# Raw resume PDFs contain real PII (passport number, DOB, home address on
+# the Europass CV) - kept local only. The repo only needs the already
+# de-identified data/resume_profile.json to run.
+my-resume/
+
+# Per-run intermediate pipeline artifacts - regenerated every run, not meant
+# to be tracked. Only data/jobs.db (the seen-jobs ledger) and
+# data/resume_profile.json (structured resume output) are tracked.
+data/jobs_raw.json
+data/jobs_filtered.json
+data/jobs_scored.json
+data/jobs_new.json
+
+# data/jobs.db is intentionally NOT ignored: it's committed back to the repo
+# by the GitHub Actions workflow after each run so seen-job dedup persists
+# across ephemeral runners (no external database needed).

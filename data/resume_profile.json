@@ -1,0 +1,42 @@
+{
+  "source_file": "D:\\JOB-FINDER-BOT\\my-resume\\HAZIQ_RESUME_UPDATED_V001.pdf",
+  "name": "Muhammad Haziq Nazeer",
+  "email": "haziqnazeer@gmail.com",
+  "phone": "(+92) 03110645820",
+  "location": "Jubilee Town, House Number 678 , F-Block , Lahore, 54000, Lahore, Pakistan",
+  "summary": "Full Stack Software Engineer with professional experience developing scalable web applications using the MERN stack, Next.js, and AWS. Skilled in backend development, RESTful APIs, real-time systems, and modern software engineering practices. Passionate about web technologies and eager to advance my knowledge through graduate studies in computer science and software engineering.",
+  "skills": [
+    "HTML",
+    "CSS",
+    "Javascript",
+    "Typescript",
+    "React.js",
+    "Next.js",
+    "Node.js",
+    "Express.js",
+    "NestJs",
+    "C++",
+    "Java",
+    "Python",
+    "PHP"
+  ],
+  "job_titles": [
+    "ASSOCIATE SOFTWARE ENGINEER",
+    "SOFTWARE ENGINEER INTERN"
+  ],
+  "years_of_experience": 1.4,
+  "education": [
+    {
+      "line": "BS SOFTWARE ENGINEERING University of Central Punjab",
+      "dates": "18/10/2021 \u2013 22/07/2025 Lahore, Pakistan"
+    },
+    {
+      "line": "INTERMEDIATE-PRE-ENGINEERING Board of Intermediate and Secondary Education,Sahiwal",
+      "dates": "25/11/2019 \u2013 22/09/2021 Sahiwal, Pakistan"
+    },
+    {
+      "line": "MATRICULATION Board of Intermediate and Secondary Education,Sahiwal",
+      "dates": "25/07/2017 \u2013 15/07/2019"
+    }
+  ]
+}
