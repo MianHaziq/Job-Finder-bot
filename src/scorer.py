@@ -25,6 +25,12 @@ SENIOR_TITLE_KEYWORDS = [
 ]
 JUNIOR_EXPERIENCE_THRESHOLD_YEARS = 3.0
 
+# Arbeitnow and Greenhouse pull every open role at a company/board, not just
+# engineering ones (only Adzuna is keyword-restricted). Anything with zero
+# matched skills is almost certainly irrelevant (e.g. Recruiter, Marketing
+# Manager, Account Executive) and shouldn't reach the digest at all.
+MIN_MATCHED_SKILLS = 1
+
 
 def _whole_word_match(term: str, text: str) -> bool:
     """Whole-word/whole-token match: plain substring matching would wrongly
@@ -75,6 +81,13 @@ def score_jobs(jobs: list, resume_profile: dict) -> list:
     return sorted(scored, key=lambda j: (j["seniority_mismatch"], -j["score"]))
 
 
+def filter_by_minimum_score(jobs: list, min_score: int = MIN_MATCHED_SKILLS) -> list:
+    """Drops jobs with no meaningful skill overlap at all - relevant mainly
+    for Arbeitnow/Greenhouse, which return every open role at a company
+    rather than just engineering ones."""
+    return [job for job in jobs if job.get("score", 0) >= min_score]
+
+
 def main():
     if not JOBS_INPUT_PATH.exists():
         raise SystemExit(f"{JOBS_INPUT_PATH} not found - run filters.py first")
@@ -87,18 +100,21 @@ def main():
         resume_profile = json.load(f)
 
     scored_jobs = score_jobs(jobs, resume_profile)
+    relevant_jobs = filter_by_minimum_score(scored_jobs)
 
-    print(f"Scored {len(scored_jobs)} jobs against {len(resume_profile.get('skills', []))} resume skills.\n")
+    print(f"Scored {len(scored_jobs)} jobs against {len(resume_profile.get('skills', []))} resume skills.")
+    print(f"Dropped {len(scored_jobs) - len(relevant_jobs)} jobs with zero skill overlap "
+          f"(e.g. Recruiter/Marketing/Sales roles that slipped in from non-keyword-filtered sources).\n")
     print("--- TOP MATCHES ---")
-    for job in scored_jobs[:10]:
+    for job in relevant_jobs[:10]:
         flag = " [SENIOR - may exceed your experience]" if job["seniority_mismatch"] else ""
         print(f"[{job['score']:2d} matched] {job['title']} - {job['company']} ({job['country']}){flag} "
               f"| matched: {', '.join(job['matched_skills']) or 'none'}")
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-        json.dump(scored_jobs, f, indent=2)
-    print(f"\nSaved {len(scored_jobs)} scored jobs to {OUTPUT_PATH}")
+        json.dump(relevant_jobs, f, indent=2)
+    print(f"\nSaved {len(relevant_jobs)} scored jobs to {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

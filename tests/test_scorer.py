@@ -91,3 +91,24 @@ def test_score_jobs_sorts_descending_by_score_within_same_seniority_group():
     assert scores == sorted(scores, reverse=True)
     assert scored[0]["title"] == "Full Stack Dev"
     assert scored[-1]["title"] == "Sales Manager"
+
+
+def test_filter_by_minimum_score_drops_zero_overlap_jobs():
+    """Real-world case: Arbeitnow/Greenhouse return every open role at a
+    company, not just engineering ones - a Recruiter or Marketing Manager
+    posting with zero skill overlap should never reach the digest."""
+    jobs = [
+        {"title": "Full Stack Dev", "score": 3},
+        {"title": "Recruiter", "score": 0},
+        {"title": "Backend Dev", "score": 1},
+    ]
+    result = scorer.filter_by_minimum_score(jobs)
+    titles = {j["title"] for j in result}
+    assert titles == {"Full Stack Dev", "Backend Dev"}
+    assert "Recruiter" not in titles
+
+
+def test_filter_by_minimum_score_respects_custom_threshold():
+    jobs = [{"title": "A", "score": 1}, {"title": "B", "score": 2}]
+    result = scorer.filter_by_minimum_score(jobs, min_score=2)
+    assert [j["title"] for j in result] == ["B"]

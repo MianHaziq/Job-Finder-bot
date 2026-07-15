@@ -66,13 +66,16 @@ def run() -> None:
 
     print("[4/6] Scoring jobs against resume...")
     scored_jobs = scorer.score_jobs(filtered_jobs, resume_profile)
+    relevant_jobs = scorer.filter_by_minimum_score(scored_jobs)
+    print(f"      {len(relevant_jobs)} jobs have at least one matched skill "
+          f"({len(scored_jobs) - len(relevant_jobs)} dropped as irrelevant)")
 
     print("[5/6] Checking for duplicates already sent...")
     conn = storage.init_db()
     try:
-        new_jobs = storage.get_new_jobs(scored_jobs, conn)
+        new_jobs = storage.get_new_jobs(relevant_jobs, conn)
         print(f"      {len(new_jobs)} new job(s) to send "
-              f"({len(scored_jobs) - len(new_jobs)} already sent before)")
+              f"({len(relevant_jobs) - len(new_jobs)} already sent before)")
 
         print("[6/6] Sending Telegram digest...")
         if not new_jobs:

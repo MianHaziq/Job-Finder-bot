@@ -850,3 +850,39 @@ sort-order, the exact messy-location-string formats that were being
 dropped, remote-flag detection from all 3 sources, remote jobs bypassing
 the visa filter, and the corrected "Remote - no relocation needed" digest
 note. Full suite: **58/58 passing.**
+
+---
+
+## Follow-up — Irrelevant Non-Engineering Jobs Slipping Into the Digest
+
+### What happened
+Asked which countries/job types the bot targets, which led to checking the
+real data: **22 of the 47 surviving jobs had zero skill overlap with your
+resume** - Recruiter, Performance Marketing Manager, Account Executive,
+FP&A Manager, Engineering Manager (non-technical), etc. Root cause: only
+Adzuna is keyword-restricted to `"software engineer"` - Arbeitnow and the 3
+Greenhouse company boards (GitLab/Stripe/Airbnb) return *every* open role,
+relying entirely on scoring to rank relevant ones up top. But `main.py` was
+sending every job that survived filtering regardless of score, so these
+completely unrelated roles (which only got through because they were
+remote + recent + in a target country) would have reached your Telegram
+digest.
+
+### Fix (`src/scorer.py` + `src/main.py`)
+- `filter_by_minimum_score(jobs, min_score=1)` — drops any job with zero
+  matched skills. You chose the "require at least 1 matched skill" option
+  (vs. a stricter 2+ threshold, since with only 1.4 years of experience a
+  stricter cutoff risked losing genuinely good junior-friendly roles too).
+- `main.py`'s step 4 now calls this right after scoring, before the
+  duplicate-check/send steps, and logs how many were dropped.
+
+### Test & result
+```
+[4/6] Scoring jobs against resume...
+      25 jobs have at least one matched skill (22 dropped as irrelevant)
+[5/6] Checking for duplicates already sent...
+      24 new job(s) to send (1 already sent before)
+```
+2 new automated tests in `test_scorer.py`: confirms zero-overlap jobs
+(e.g. "Recruiter") are dropped while any-overlap jobs are kept, and that a
+custom threshold works. Full suite: **60/60 passing.**
