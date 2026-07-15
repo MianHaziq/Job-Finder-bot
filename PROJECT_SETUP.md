@@ -886,3 +886,30 @@ digest.
 2 new automated tests in `test_scorer.py`: confirms zero-overlap jobs
 (e.g. "Recruiter") are dropped while any-overlap jobs are kept, and that a
 custom threshold works. Full suite: **60/60 passing.**
+
+---
+
+## Follow-up — Workflow's Commit Step Wasn't Resilient to a Moved Remote
+
+### What happened
+A GitHub Actions run's "Run the job bot" step succeeded fine (the bot
+worked correctly), but the final "Commit updated seen-jobs database" step
+failed with a plain `git push` rejection - the remote had moved ahead
+(code commits were being pushed from this session around the same time).
+Caused mainly by unusually frequent manual re-runs/pushes during today's
+testing, but the underlying risk is real: any two runs (or a run + a manual
+code push) close together in time can hit the same race.
+
+### Fix (`.github/workflows/run_job_bot.yml`)
+The commit step now retries up to 3 times: if `git push` is rejected, it
+fetches the latest remote state and rebases the jobs.db commit on top of
+it, resolving any conflict on that file with `-X ours` (safe here since the
+commit touches only `data/jobs.db`, and "ours" already contains everything
+from when the run started plus its own new entries).
+
+### Result
+Couldn't fully simulate GitHub's runner locally, but traced through the
+script logic step by step (bash `-e` semantics, conditional vs.
+unconditional command failures) to confirm it retries correctly and still
+surfaces a real failure clearly if all 3 attempts fail. Pushed; will be
+exercised for real on the next scheduled/manual run.
