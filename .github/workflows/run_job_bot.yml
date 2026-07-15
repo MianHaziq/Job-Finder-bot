@@ -2,8 +2,8 @@ name: Run Job Bot
 
 on:
   schedule:
-    - cron: "0 */12 * * *"  # every 12 hours
-  workflow_dispatch: {}      # lets you trigger a run manually from the Actions tab
+    - cron: "0 */4 * * *"  # every 4 hours
+  workflow_dispatch: {}     # lets you trigger a run manually from the Actions tab
 
 jobs:
   run-bot:
