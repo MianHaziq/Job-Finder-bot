@@ -702,8 +702,11 @@ Workflow: whenever you update your resume, run
   `data/resume_profile.json` (needed by every scheduled run, see above).
 
 ### How it works (`.github/workflows/run_job_bot.yml`)
-1. Triggers every 12 hours (`cron: "0 */12 * * *"`) plus a manual
-   "Run workflow" button (`workflow_dispatch`) for on-demand testing.
+1. Triggers every 4 hours (`cron: "0 */4 * * *"`) plus a manual
+   "Run workflow" button (`workflow_dispatch`) for on-demand testing. Changed
+   from every 12 hours since the repo is public - GitHub Actions minutes are
+   free and unlimited for public repos, so there's no cost to running more
+   often.
 2. Checks out the repo, installs Python 3.12 + `requirements.txt`.
 3. Runs `python src/main.py` with your 4 secrets
    (`ADZUNA_APP_ID`/`ADZUNA_APP_KEY`/`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`)
