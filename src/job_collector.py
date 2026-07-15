@@ -48,6 +48,13 @@ def _strip_html(raw_html: str) -> str:
     return re.sub(r"<[^>]+>", " ", unescaped).strip()
 
 
+def _looks_remote(*texts: str) -> bool:
+    """Heuristic remote-role check for sources with no explicit remote flag
+    (Adzuna, Greenhouse) - both commonly write "Remote" into the title or
+    location for fully-remote roles (e.g. Greenhouse's "Remote, Italy")."""
+    return any("remote" in (text or "").lower() for text in texts)
+
+
 def fetch_adzuna_jobs(country: str, keyword: str, app_id: str, app_key: str,
                        results_per_page: int = 20, page: int = 1) -> list:
     """Calls Adzuna's search endpoint and returns the raw list of job dicts."""
@@ -65,14 +72,17 @@ def fetch_adzuna_jobs(country: str, keyword: str, app_id: str, app_key: str,
 
 
 def normalize_adzuna_job(raw_job: dict, country: str) -> dict:
+    title = raw_job.get("title", "")
+    location = raw_job.get("location", {}).get("display_name", "")
     return {
-        "title": raw_job.get("title", ""),
+        "title": title,
         "company": raw_job.get("company", {}).get("display_name", ""),
-        "location": raw_job.get("location", {}).get("display_name", ""),
+        "location": location,
         "country": country,
         "date_posted": raw_job.get("created", ""),
         "url": raw_job.get("redirect_url", ""),
         "description": raw_job.get("description", ""),
+        "is_remote": _looks_remote(title, location),
         "source": "adzuna",
     }
 
@@ -118,6 +128,7 @@ def normalize_arbeitnow_job(raw_job: dict) -> dict:
         "date_posted": date_posted,
         "url": raw_job.get("url", ""),
         "description": _strip_html(raw_job.get("description", "")),
+        "is_remote": bool(raw_job.get("remote", False)),
         "source": "arbeitnow",
     }
 
@@ -135,16 +146,18 @@ def fetch_greenhouse_jobs(company: str) -> list:
 
 
 def normalize_greenhouse_job(raw_job: dict, company: str) -> dict:
+    title = raw_job.get("title", "")
     location = raw_job.get("location", {}).get("name", "") or ""
     country = location.split(",")[-1].strip() if "," in location else location
     return {
-        "title": raw_job.get("title", ""),
+        "title": title,
         "company": raw_job.get("company_name", company),
         "location": location,
         "country": country,
         "date_posted": raw_job.get("first_published", ""),
         "url": raw_job.get("absolute_url", ""),
         "description": _strip_html(raw_job.get("content", "")),
+        "is_remote": _looks_remote(title, location),
         "source": "greenhouse",
     }
 

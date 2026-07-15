@@ -31,8 +31,24 @@ def test_normalize_adzuna_job_maps_fields_correctly():
         "date_posted": "2026-07-10T12:00:00Z",
         "url": "https://example.com/job/123",
         "description": "We need a backend engineer with visa sponsorship available.",
+        "is_remote": False,
         "source": "adzuna",
     }
+
+
+def test_normalize_adzuna_job_detects_remote_from_title_or_location():
+    remote_in_title = jc.normalize_adzuna_job(
+        {"title": "Remote Backend Engineer", "location": {"display_name": "Berlin, Germany"}}, country="de"
+    )
+    remote_in_location = jc.normalize_adzuna_job(
+        {"title": "Backend Engineer", "location": {"display_name": "Remote, US"}}, country="us"
+    )
+    not_remote = jc.normalize_adzuna_job(
+        {"title": "Backend Engineer", "location": {"display_name": "Berlin, Germany"}}, country="de"
+    )
+    assert remote_in_title["is_remote"] is True
+    assert remote_in_location["is_remote"] is True
+    assert not_remote["is_remote"] is False
 
 
 def test_normalize_adzuna_job_handles_missing_fields():
@@ -81,6 +97,14 @@ def test_normalize_arbeitnow_job_maps_fields_correctly():
     assert job["description"] == "Visa sponsorship available."
     assert job["source"] == "arbeitnow"
     assert job["date_posted"].startswith("2023-11-14")
+    assert job["is_remote"] is False
+
+
+def test_normalize_arbeitnow_job_uses_explicit_remote_flag():
+    raw_job = {"title": "Backend Engineer", "company_name": "Acme", "location": "Munich",
+               "created_at": 1700000000, "url": "https://x.com", "description": "", "remote": True}
+    job = jc.normalize_arbeitnow_job(raw_job)
+    assert job["is_remote"] is True
 
 
 def test_normalize_greenhouse_job_maps_fields_correctly():
@@ -97,6 +121,20 @@ def test_normalize_greenhouse_job_maps_fields_correctly():
     assert job["country"] == "Italy"
     assert job["description"] == "Great AI role"
     assert job["source"] == "greenhouse"
+    assert job["is_remote"] is True
+
+
+def test_normalize_greenhouse_job_detects_remote_from_messy_location_formats():
+    for location_name in ["US-Remote", "Remote in the US", "Remote - USA", "Remote"]:
+        job = jc.normalize_greenhouse_job(
+            {"title": "Engineer", "location": {"name": location_name}}, company="acme"
+        )
+        assert job["is_remote"] is True, f"expected is_remote for {location_name!r}"
+
+    not_remote = jc.normalize_greenhouse_job(
+        {"title": "Engineer", "location": {"name": "Berlin, Germany"}}, company="acme"
+    )
+    assert not_remote["is_remote"] is False
 
 
 def test_fetch_arbeitnow_jobs_returns_real_results():

@@ -785,3 +785,68 @@ Full suite re-run after this change: **45/45 passing.**
   `python src/resume_parser.py` (it reads both paths from `.env`
   automatically) and push the refreshed `data/resume_profile.json` - that's
   the only file the scheduled bot actually reads.
+
+---
+
+## Follow-up — First Real Digest Feedback: Bad Score + Wrong Seniority + Missing Remote Jobs
+
+### What happened
+The first real GitHub Actions run succeeded and delivered a real Telegram
+message - end-to-end confirmed working. But it surfaced 3 real problems
+worth fixing rather than living with:
+
+**1. Score formula was flawed.** The one job you got scored "2.1" - looked
+broken. It wasn't a bug in the match itself: `score = (matched skills /
+*total* resume skills) * 100`. Before merging resumes you had 13 skills, so
+1 match = 7.7%. After merging to 48 skills, that *same* 1 match became
+2.1% - the score shrinks every time the resume profile grows, even though
+nothing about the actual job match changed. **Fix:** `score_job()` now
+returns a raw matched-skill *count* instead of a percentage - stable
+regardless of how many total skills are in your profile (verified with a
+test that scores the same job against a 1-skill vs. 51-skill resume and
+confirms the count doesn't change).
+
+**2. No seniority awareness at all.** The job was "Senior Backend Engineer"
+despite you having ~1.4 years of experience - `scorer.py` only ever checked
+skill-keyword overlap, never title seniority. **Fix:** added
+`is_seniority_mismatch(title, years_of_experience)` in `scorer.py` - flags
+titles containing "senior"/"staff"/"principal"/"lead"/"director"/etc. when
+experience is under 3 years. `score_jobs()` now sorts on
+`(seniority_mismatch, -score)` - every appropriately-leveled job ranks above
+every mismatched one, regardless of skill score. `notifier.py` shows a
+"⚠ May require more seniority than your experience" line when flagged.
+
+**3. Good remote jobs were being silently dropped - a real bug, not just a
+missing feature.** You asked to make sure remote jobs are included, which
+led to finding this: Greenhouse's Stripe/Airbnb boards format remote roles
+as `"US-Remote"`, `"Remote in the US"`, `"Remote - USA"` etc. (no clean
+"City, Country" format), and the country filter required an *exact* match
+against the whole string - so all of these were being classified as
+`"other"` and dropped entirely. Confirmed at scale: 38 Stripe + 28 Airbnb
+US-remote roles were being thrown away every single run.
+**Fix:** `classify_country()` in `filters.py` now searches for any known
+country token as a *whole word anywhere* in the string, not just an exact
+match (e.g. `"US-Remote"` now correctly matches "us"). Also added an
+`is_remote` field (from Arbeitnow's explicit `remote` boolean, or a
+"remote" keyword heuristic on title/location for Adzuna/Greenhouse) that
+lets a job skip the visa/relocation keyword filter entirely - a genuinely
+remote role doesn't need visa sponsorship or physical relocation, regardless
+of which country it's listed under, same as a Pakistan job.
+
+### Result
+Re-ran the full pipeline after all three fixes:
+```
+Collected 1271 jobs -> 260 after date filter -> 206 after country filter
+(46 of which are remote) -> 47 after visa/remote filter -> 46 new
+(1 already sent previously)
+```
+Up from just 1 surviving job before these fixes - the remote-job country
+classification bug alone was responsible for most of that.
+
+13 new/updated automated tests added across `test_scorer.py`,
+`test_filters.py`, `test_job_collector.py`, and `test_notifier.py` covering:
+score stability across resume sizes, seniority-mismatch detection and
+sort-order, the exact messy-location-string formats that were being
+dropped, remote-flag detection from all 3 sources, remote jobs bypassing
+the visa filter, and the corrected "Remote - no relocation needed" digest
+note. Full suite: **58/58 passing.**

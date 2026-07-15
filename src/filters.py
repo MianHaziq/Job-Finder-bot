@@ -11,6 +11,7 @@ True for everything else (used by filters.py's next stage, the visa
 keyword filter, and by the Telegram digest).
 """
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -89,12 +90,27 @@ def is_recent(job: dict, max_age_days: int = MAX_AGE_DAYS) -> bool:
     return timedelta(0) <= age <= timedelta(days=max_age_days)
 
 
+def _contains_token(token: str, text: str) -> bool:
+    pattern = r"(?<![a-zA-Z0-9])" + re.escape(token) + r"(?![a-zA-Z0-9])"
+    return re.search(pattern, text) is not None
+
+
 def classify_country(country: str) -> str:
-    """Returns "pakistan", "target", or "other" for a raw country string."""
-    token = (country or "").strip().lower()
-    if token in PAKISTAN_TOKENS:
+    """Returns "pakistan", "target", or "other" for a raw country string.
+
+    Remote listings often don't follow a clean "City, Country" format -
+    e.g. Stripe/Airbnb's Greenhouse boards use "US-Remote", "Remote in the
+    US", "USA - Remote", etc. An exact match against the whole string would
+    miss all of these and silently drop otherwise-good remote jobs, so this
+    searches for any known token as a whole word anywhere in the string
+    instead of requiring an exact match.
+    """
+    text = (country or "").strip().lower()
+    if not text:
+        return "other"
+    if any(_contains_token(token, text) for token in PAKISTAN_TOKENS):
         return "pakistan"
-    if token in TARGET_COUNTRY_TOKENS:
+    if any(_contains_token(token, text) for token in TARGET_COUNTRY_TOKENS):
         return "target"
     return "other"
 
@@ -136,12 +152,15 @@ def mentions_visa_or_relocation(description: str) -> bool:
 
 
 def filter_by_visa_keywords(jobs: list) -> list:
-    """Pakistan jobs (relocation_required=False) skip this filter entirely.
-    Everything else is only kept if it genuinely mentions visa/relocation
-    support in its description."""
+    """Pakistan jobs (relocation_required=False) skip this filter entirely,
+    since no relocation is needed. Genuinely remote jobs (is_remote=True)
+    also skip it - a fully remote role doesn't require physically relocating
+    or being sponsored a visa, regardless of which country it's listed
+    under. Everything else is only kept if it genuinely mentions
+    visa/relocation support in its description."""
     kept = []
     for job in jobs:
-        if not job.get("relocation_required", True):
+        if not job.get("relocation_required", True) or job.get("is_remote"):
             kept.append(job)
             continue
         if mentions_visa_or_relocation(job.get("description", "")):

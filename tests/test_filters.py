@@ -48,6 +48,19 @@ def test_classify_country_recognizes_codes_and_names():
     assert filters.classify_country("Brazil") == "other"
 
 
+def test_classify_country_recognizes_messy_remote_location_formats():
+    """Real bug found in production: Stripe/Airbnb's Greenhouse boards don't
+    use a clean "City, Country" format for remote roles, so an exact-match
+    check against the whole string was silently dropping otherwise-good
+    remote US/Canada jobs."""
+    assert filters.classify_country("US-Remote") == "target"
+    assert filters.classify_country("Remote in the US") == "target"
+    assert filters.classify_country("USA - Remote") == "target"
+    assert filters.classify_country("Remote, Italy") == "target"
+    assert filters.classify_country("China - Remote") == "other"  # not a target region
+    assert filters.classify_country("") == "other"
+
+
 def test_filter_by_date_drops_stale_jobs():
     jobs = [_job(days_old=1), _job(days_old=10)]
     result = filters.filter_by_date(jobs)
@@ -114,3 +127,22 @@ def test_filter_by_visa_keywords_drops_target_jobs_without_keywords():
     result = filters.filter_by_visa_keywords([job_with_keyword, job_without_keyword])
     assert len(result) == 1
     assert "sponsorship" in result[0]["description"].lower()
+
+
+def test_filter_by_visa_keywords_remote_jobs_skip_the_filter():
+    """A genuinely remote role doesn't require relocation or visa
+    sponsorship regardless of which country it's listed under, so it
+    should pass through even with no visa/relocation mention at all."""
+    remote_job = _job(country="us")
+    remote_job["relocation_required"] = True
+    remote_job["is_remote"] = True
+    remote_job["description"] = "No mention of visa or relocation at all."
+
+    non_remote_job = _job(country="us")
+    non_remote_job["relocation_required"] = True
+    non_remote_job["is_remote"] = False
+    non_remote_job["description"] = "No mention of visa or relocation at all."
+
+    result = filters.filter_by_visa_keywords([remote_job, non_remote_job])
+    assert len(result) == 1
+    assert result[0]["is_remote"] is True
