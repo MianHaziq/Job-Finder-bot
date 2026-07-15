@@ -735,3 +735,53 @@ on GitHub's own servers once pushed), but verified everything it depends on:
 
 **You'll confirm the real scheduled run + Telegram delivery once deployed**,
 since Telegram itself is unreachable from this environment (see Module 9).
+
+---
+
+## Follow-up — Merging Both Resumes
+
+### Why this changed
+After deployment, it became clear the Europass CV alone (the one
+`RESUME_FILE_PATH` pointed to) only yields **13 skills** - it lists
+programming languages but not frameworks/tools/cloud services. Your simpler
+CV (`Muhammad_Haziq_Nazeer_Resume_TWO.pdf`) yields **41 skills** (React,
+Next.js, AWS, Docker, MongoDB, Stripe, WebSockets, etc.) because its SKILLS
+section is organized by explicit categories. Since `scorer.py` only ever
+matches against whatever's in `resume_profile.json`, using just the
+Europass CV meant jobs were being scored against a much narrower picture of
+your actual skills than you really have.
+
+### What changed (`src/resume_parser.py`)
+- `RESUME_FILE_PATH` in `.env`/`.env.example` now accepts **comma-separated
+  paths** - currently set to both PDFs.
+- `build_combined_profile(file_paths)` — parses every listed file
+  independently, then merges them: skills/job-titles/education are unioned
+  and deduplicated (case-insensitive), `years_of_experience` takes the max
+  across files (both describe the same jobs, so they should roughly agree),
+  and `name`/`email`/`phone`/`location`/`summary` take the first non-empty
+  or longest value found.
+- `main()` now splits `RESUME_FILE_PATH` on commas; a single path still
+  works exactly as before (uses `build_profile()` directly), multiple paths
+  trigger the merge.
+
+### Test & result
+```bash
+./venv/Scripts/python.exe src/resume_parser.py
+```
+Merged profile now has **48 unique skills** (13 + 41, minus overlaps),
+still correctly identifies name/email, 1.4 years of experience, and 4
+education entries (2 from each CV - degree + intermediate + matriculation
+from Europass, the single combined line from the simple CV). 1 new
+automated test added (`test_build_combined_profile_merges_skills_from_both_resumes`,
+4 total in `tests/test_resume_parser.py`) verifying every skill from both
+individual resumes appears in the merged result with no duplicates.
+
+Full suite re-run after this change: **45/45 passing.**
+
+### How this actually works day-to-day
+- Your raw PDFs never leave your computer (not in git - see Module 10's PII
+  notes) and the bot on GitHub Actions never touches them.
+- Locally, whenever either resume changes, re-run
+  `python src/resume_parser.py` (it reads both paths from `.env`
+  automatically) and push the refreshed `data/resume_profile.json` - that's
+  the only file the scheduled bot actually reads.

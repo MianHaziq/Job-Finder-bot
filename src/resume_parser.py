@@ -221,22 +221,96 @@ def build_profile(file_path: Path) -> dict:
     }
 
 
+def _merge_skills(skill_lists: list) -> list:
+    seen = set()
+    merged = []
+    for skills in skill_lists:
+        for skill in skills:
+            key = skill.lower()
+            if key not in seen:
+                seen.add(key)
+                merged.append(skill)
+    return merged
+
+
+def _merge_job_titles(title_lists: list) -> list:
+    seen = set()
+    merged = []
+    for titles in title_lists:
+        for title in titles:
+            key = title.lower()
+            if key not in seen:
+                seen.add(key)
+                merged.append(title)
+    return merged
+
+
+def _merge_education(education_lists: list) -> list:
+    seen = set()
+    merged = []
+    for entries in education_lists:
+        for entry in entries:
+            key = entry["line"].lower()
+            if key not in seen:
+                seen.add(key)
+                merged.append(entry)
+    return merged
+
+
+def _first_non_empty(*values: str) -> str:
+    for value in values:
+        if value:
+            return value
+    return ""
+
+
+def build_combined_profile(file_paths: list) -> dict:
+    """Merges multiple resume files (e.g. a Europass CV + a simpler CV) into
+    one profile. Different resume formats often surface different skills
+    (e.g. one lists frameworks/tools explicitly, another only languages) -
+    merging gives the fullest possible picture for scoring."""
+    profiles = [build_profile(path) for path in file_paths]
+
+    longest_summary = max((p["summary"] for p in profiles), key=len, default="")
+    longest_location = max((p["location"] for p in profiles), key=len, default="")
+
+    return {
+        "source_files": [str(p) for p in file_paths],
+        "name": _first_non_empty(*(p["name"] for p in profiles)),
+        "email": _first_non_empty(*(p["email"] for p in profiles)),
+        "phone": _first_non_empty(*(p["phone"] for p in profiles)),
+        "location": longest_location,
+        "summary": longest_summary,
+        "skills": _merge_skills(p["skills"] for p in profiles),
+        "job_titles": _merge_job_titles(p["job_titles"] for p in profiles),
+        "years_of_experience": max((p["years_of_experience"] for p in profiles), default=0.0),
+        "education": _merge_education(p["education"] for p in profiles),
+    }
+
+
 def main():
     load_dotenv()
     resume_path_str = os.getenv("RESUME_FILE_PATH")
     if not resume_path_str:
         raise SystemExit("RESUME_FILE_PATH is not set in .env")
 
-    resume_path = PROJECT_ROOT / resume_path_str
-    if not resume_path.exists():
-        raise SystemExit(f"Resume file not found: {resume_path}")
+    # Supports one path, or multiple comma-separated paths to merge
+    # (e.g. a Europass CV + a simpler CV, combining their skill lists).
+    resume_paths = [PROJECT_ROOT / p.strip() for p in resume_path_str.split(",") if p.strip()]
+    for path in resume_paths:
+        if not path.exists():
+            raise SystemExit(f"Resume file not found: {path}")
 
-    raw_text = extract_text(resume_path)
-    print("--- RAW TEXT (sanity check) ---")
-    print(raw_text)
-    print("--- END RAW TEXT ---\n")
+    for path in resume_paths:
+        print(f"--- RAW TEXT ({path.name}, sanity check) ---")
+        print(extract_text(path))
+        print(f"--- END RAW TEXT ({path.name}) ---\n")
 
-    profile = build_profile(resume_path)
+    if len(resume_paths) == 1:
+        profile = build_profile(resume_paths[0])
+    else:
+        profile = build_combined_profile(resume_paths)
+
     print("--- STRUCTURED PROFILE ---")
     print(json.dumps(profile, indent=2))
 

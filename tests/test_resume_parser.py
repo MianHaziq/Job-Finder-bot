@@ -35,3 +35,21 @@ def test_extract_skills_strips_stray_punctuation():
     skills = rp.extract_skills(sections)
     assert "PostgreSQL" in skills
     assert not any(s.startswith(":") for s in skills)
+
+
+def test_build_combined_profile_merges_skills_from_both_resumes():
+    combined = rp.build_combined_profile([EUROPASS_CV, SIMPLE_CV])
+    europass_only = rp.build_profile(EUROPASS_CV)
+    simple_only = rp.build_profile(SIMPLE_CV)
+
+    # Combined skill list must contain everything from both, deduplicated.
+    for skill in europass_only["skills"]:
+        assert any(skill.lower() == s.lower() for s in combined["skills"])
+    for skill in simple_only["skills"]:
+        assert any(skill.lower() == s.lower() for s in combined["skills"])
+    assert len(combined["skills"]) >= len(simple_only["skills"])
+    assert len(combined["skills"]) == len(set(s.lower() for s in combined["skills"]))  # no duplicates
+    assert combined["name"] == "Muhammad Haziq Nazeer"
+    assert "@" in combined["email"]
+    assert len(combined["job_titles"]) >= 1
+    assert len(combined["education"]) >= 1

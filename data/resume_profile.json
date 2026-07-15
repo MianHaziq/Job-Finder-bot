@@ -1,5 +1,8 @@
 {
-  "source_file": "D:\\JOB-FINDER-BOT\\my-resume\\HAZIQ_RESUME_UPDATED_V001.pdf",
+  "source_files": [
+    "D:\\JOB-FINDER-BOT\\my-resume\\HAZIQ_RESUME_UPDATED_V001.pdf",
+    "D:\\JOB-FINDER-BOT\\my-resume\\Muhammad_Haziq_Nazeer_Resume_TWO.pdf"
+  ],
   "name": "Muhammad Haziq Nazeer",
   "email": "haziqnazeer@gmail.com",
   "phone": "(+92) 03110645820",
@@ -18,11 +21,49 @@
     "C++",
     "Java",
     "Python",
-    "PHP"
+    "PHP",
+    "Redux",
+    "React Query",
+    "Tailwind CSS",
+    "HTML/CSS",
+    "Nest.js",
+    "FastAPI",
+    "Prisma",
+    "PostgreSQL",
+    "MongoDB",
+    "MySQL",
+    "Redis",
+    "Stripe",
+    "MyFatoorah",
+    "Apple Pay",
+    "FCM Push",
+    "Bunny CDN",
+    "AWS S3",
+    "OpenAI/Claude",
+    "AWS EC2",
+    "AWS Amplify",
+    "Vercel",
+    "Docker",
+    "CI/CD",
+    "WebSockets",
+    "WebRTC",
+    "Jest",
+    "Unit Testing",
+    "Integration Testing",
+    "Playwright",
+    "Swagger/OpenAPI",
+    "Git",
+    "GitHub",
+    "Jira",
+    "Agile",
+    "JWT"
   ],
   "job_titles": [
     "ASSOCIATE SOFTWARE ENGINEER",
-    "SOFTWARE ENGINEER INTERN"
+    "SOFTWARE ENGINEER INTERN",
+    "Tecaudex, Associate Software Engineer",
+    "Tecaudex, Software Engineer Intern",
+    "Tech OverFlow, Software Engineer Intern"
   ],
   "years_of_experience": 1.4,
   "education": [
@@ -37,6 +78,10 @@
     {
       "line": "MATRICULATION Board of Intermediate and Secondary Education,Sahiwal",
       "dates": "25/07/2017 \u2013 15/07/2019"
+    },
+    {
+      "line": "Bachelor in Software Development, University of Central Punjab, Lahore",
+      "dates": "11/2021 \u2013 07/2025"
     }
   ]
 }
