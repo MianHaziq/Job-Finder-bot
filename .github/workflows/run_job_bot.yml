@@ -36,5 +36,25 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/jobs.db
-          git diff --staged --quiet || git commit -m "Update seen-jobs database [skip ci]"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "Update seen-jobs database [skip ci]"
+          # The remote can move ahead between this job starting and this step
+          # running (e.g. a manual re-run overlapping another push/run). Retry
+          # a few times: fetch, then reapply this commit on top of the latest
+          # remote history, preferring our jobs.db if there's a conflict (it
+          # already contains everything from when this run started, plus its
+          # own new entries).
+          for attempt in 1 2 3; do
+            if git push; then
+              break
+            fi
+            echo "Push rejected (attempt $attempt) - fetching and rebasing..."
+            git fetch origin main
+            git rebase -X ours origin/main
+            if [ "$attempt" = "3" ]; then
+              git push
+            fi
+          done
