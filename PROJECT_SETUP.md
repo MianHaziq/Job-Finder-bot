@@ -916,3 +916,271 @@ script logic step by step (bash `-e` semantics, conditional vs.
 unconditional command failures) to confirm it retries correctly and still
 surfaces a real failure clearly if all 3 attempts fail. Pushed; will be
 exercised for real on the next scheduled/manual run.
+
+---
+
+## Major Rework — Relevance Overhaul (Title Matching, Worldwide Location, Multi-Query Search)
+
+You reported the bot was returning too many unrelated jobs - wrong roles,
+wrong industries, wrong seniority - and asked for a full analysis, fixes,
+comprehensive tests, and an empirical precision/recall validation against
+100+ real live jobs. This section documents all of it.
+
+### Root cause analysis (what was actually wrong, and why)
+
+**1. There was no title/role-type matching anywhere in the pipeline - the
+primary cause.** `scorer.py` only ever checked whether your 48 *skill*
+keywords (React.js, Node.js, AWS, Docker, Git, Jira, Agile, CI/CD...)
+appeared anywhere in a job's title+description. Nothing checked whether the
+job's *title* was actually a Software/Full-Stack/MERN/Backend/Frontend
+role. Since Arbeitnow and Greenhouse (`job_collector.py`) pull **every open
+role** with zero keyword restriction, a "DevOps Engineer," "Data Engineer,"
+"Machine Learning Engineer," "QA Automation Engineer," or "Site Reliability
+Engineer" posting mentioning AWS/Docker/Git scored just as well as an
+actual MERN developer role, because generic terms like "Git"/"Jira"/"Agile"
+carry almost no discriminating signal but counted identically to a specific
+one like "React.js."
+
+**2. Non-tech industries were only excluded incidentally.** No title-based
+exclude list existed at all (Sales/Marketing/HR/Nurse/Teacher/Civil-
+Mechanical-Electrical Engineer/etc.) - they were only dropped because they
+happened to score 0 on skill overlap, which is fragile, not a guarantee.
+
+**3. Seniority was only "soft-deprioritized," never excluded.** The old
+`is_seniority_mismatch()` pushed Senior/Staff/Lead/Principal/Director/
+Architect titles to the *bottom* of the ranked list, but `main.py` still
+sent every job in the list regardless of rank - nothing was actually
+removed. This is exactly why you received a "Senior" role earlier.
+
+**4. Country handling was a hard allow-list, contradicting "search
+worldwide."** The old `classify_country()`/`TARGET_COUNTRY_TOKENS` dropped
+any job whose country wasn't one of ~15 hardcoded names/codes - UAE, Saudi
+Arabia, Singapore, Sweden, Norway, Denmark, Finland, Ireland, Japan, South
+Korea, Luxembourg were all silently thrown away, even if remote or visa-
+sponsored.
+
+**5. Only one search phrase was ever used, and only for Adzuna.** Arbeitnow/
+Greenhouse got no keyword filtering at all, simultaneously under-searching
+the one filtered source and completely flooding the pipeline from the other
+two.
+
+**6. Remote/relocation phrase list was narrower than requested** (missing
+"work from home," "fully remote," "remote worldwide," "international
+applicants welcome" as explicit signals).
+
+**7. No per-job structured logging** - only aggregate counts were printed.
+
+### An engineering trade-off you decided on before implementation
+
+Searching 14 title variations across every Adzuna-supported country, every
+4 hours, works out to ~1,500+ Adzuna calls/day - likely to exceed a free-
+tier quota (Adzuna doesn't expose its limit in responses, so this couldn't
+be confirmed directly, only estimated). You chose to **keep all 14 literal
+query variations** but **drop the schedule back to every 12 hours**
+(from the 4-hour schedule set earlier) to manage the ~14x volume increase
+safely. See `.github/workflows/run_job_bot.yml`.
+
+### Fix 1 — Title-based role-relevance gate (`src/scorer.py`)
+
+Two-stage relevance model, replacing pure skill-overlap scoring:
+
+**Stage 1 (gate, hard accept/reject):**
+- `EXCLUDE_INDUSTRY_PATTERNS` - hard rejects Sales/Marketing/Recruiter/HR/
+  Customer Support/Account Executive/Accountant/Financial Analyst/Nurse/
+  Teacher/Civil-Mechanical-Electrical Engineer/Data Entry/Call Center/Truck
+  Driver, checked first, regardless of any skill overlap.
+- `EXCLUDE_SENIORITY_PATTERNS` - hard rejects Senior/Sr./Staff/Principal/
+  Lead/Director/Head of/VP (+ spelled-out "Vice President")/Chief/Architect/
+  Manager (Manager is exempted only for Junior/Associate Project Manager).
+  This is now a **hard exclude**, not a soft deprioritization.
+- `TARGET_ROLE_PATTERNS` + `TECH_ROLE_WORD_PAIRS` - a job must positively
+  match one of: Software Engineer, Software Developer, Full Stack (Developer/
+  Engineer), MERN/MEAN Stack, Backend/Frontend/React/Node.js/JavaScript
+  Developer (any qualifier word in between allowed, see Fix 2 below), Web
+  Developer, or Junior/Associate Project Manager (only with an explicit
+  software/IT context - "Junior Project Manager" alone is far too broad an
+  industry-agnostic title otherwise). This positive-match requirement is
+  what naturally excludes DevOps/Data/ML/QA/SRE/Architect-type roles
+  *without* needing to enumerate every possible non-target discipline by
+  name - this is the rule-based stand-in for semantic matching ("MERN
+  Developer" ~ "React Developer" ~ "Full Stack Developer" ~ "Software
+  Engineer (JavaScript)" all satisfy different groups, so any of them
+  passes, with no LLM/embedding call needed).
+
+**Stage 2 (weighted ranking score, only among jobs that passed Stage 1):**
+`compute_weighted_score()` combines: role-group weight (an exact specialty
+match like MERN/full-stack/React/Node scores higher than a generic
+"Software Developer" match - the "title similarity" factor), skill overlap
+(`+2` per matched resume skill), a junior-label bonus (`+5` if the title
+itself says Junior/Graduate/Entry-Level/Associate/Intern - explicit
+experience-level match), a remote bonus (`+8`, highest per your stated
+priority order), a relocation-sponsored bonus (`+5`, only if not remote),
+and a recency bonus (up to `+3`, decaying linearly to 0 at 7 days old).
+**"Company reputation" is one of the requested scoring factors but is
+intentionally *not* implemented** - there's no real data source wired into
+this pipeline (no Glassdoor/Crunchbase/etc. integration), and faking a
+placeholder number would be worse than being explicit about the gap. See
+Recommendations below.
+
+### Fix 2 — Worldwide location, no country allow-list (`src/filters.py`)
+
+`classify_country()`/`filter_by_country()` were replaced with
+`filter_by_location()`: a job is kept if it's in **Pakistan** (no
+relocation needed), **genuinely remote** (any country), or **explicitly
+offers visa/relocation sponsorship** (any country) - the hardcoded ~15-
+country allow-list is gone entirely. This is worldwide by construction: a
+job in the UAE, Sweden, or Japan is now evaluated on the same remote/
+relocation signal as one in the US or UK, not on whether its country
+happened to be on a fixed list.
+
+**Known limitation, not fixed (a real constraint, not an oversight):**
+Adzuna itself only supports querying 19 specific countries (`at, au, be, br,
+ca, ch, de, es, fr, gb, in, it, mx, nl, nz, pl, sg, us, za` - confirmed
+directly against Adzuna's own API error message). **Sweden, Norway,
+Denmark, Finland, Ireland, UAE, Saudi Arabia, Japan, South Korea, and
+Luxembourg cannot be queried via Adzuna at all**, regardless of
+configuration - there is no "worldwide" option on their end. Jobs from
+those countries can still surface via Arbeitnow/Greenhouse (which aren't
+restricted to a country list), but there's no dedicated *search* of those
+countries. See Recommendations.
+
+### Fix 3 — Multi-query search generation (`src/job_collector.py`)
+
+`SEARCH_QUERIES` now holds all 14 requested title variations (Associate/
+Junior/Graduate Software Engineer, Software Engineer I, MERN Stack
+Developer, React/Node.js Developer, Full Stack Developer/Engineer,
+Software Developer, Backend/Frontend/Web Developer, Junior Project
+Manager), each searched against all 19 Adzuna-supported countries
+(`ADZUNA_ALL_COUNTRIES`) - 266 Adzuna calls per run. Results are deduped by
+URL (`_dedupe_by_url()`), since the same posting commonly surfaces under
+multiple search phrases.
+
+### Fix 4 — Structured per-job audit logging (`src/scorer.py`)
+
+`score_jobs()` now writes a full JSONL audit trail to
+`data/evaluation_log.jsonl` on every run - one line per job processed,
+whether accepted or rejected: title, company, country, matched skills,
+score, remote/relocation detected, junior-labeled, accepted (true/false),
+and the *exact* rejection reason (e.g. `"excluded seniority (matched
+'\bsenior\b')"`, `"title does not match any target role"`). This is what
+made the validation below possible - every decision is traceable.
+
+### Edge cases handled
+- **Missing/ambiguous experience level**: an unlabeled title like plain
+  "Software Engineer" is *not* penalized for not saying "junior" - it's
+  accepted by default (junior-labeling only adds a ranking bonus, it's
+  never required to pass the gate).
+- **Ambiguous remote status**: widened phrase detection ("work from home,"
+  "fully remote," "remote worldwide," "remote-first") checked against the
+  full description, not just title/location.
+- **Vague/foreign-language titles**: see the diacritic-normalization fix
+  below.
+- **Relocation implied but not stated**: intentionally *not* inferred -
+  requiring an explicit mention (with negation-checking, from the earlier
+  Module 6 work) avoids false confidence; this is a deliberate precision-
+  over-recall choice, called out as a trade-off, not silently guessed at.
+
+### Validation methodology and results (the empirical part)
+
+**Important methodological caveat, stated upfront:** "ground truth" here is
+my own careful manual review of each real job title against your literal
+stated criteria - not independent third-party/human-labeled data. That's a
+real limitation for a fully rigorous study, and worth knowing before trusting
+the numbers below at face value. It is, however, the most rigorous check
+achievable without a human labeling service, and it *did* catch concrete,
+real bugs (evidence it wasn't just circular).
+
+**Sample**: collected a live batch across all 3 sources (Adzuna with 4
+query variations x 5 countries, plus full-volume Arbeitnow + Greenhouse) -
+2,363 raw jobs, filtered to **105 jobs** surviving the date + worldwide
+location filter (multiple sources: 20 Adzuna, 8 Arbeitnow, 77 Greenhouse).
+Every one of the 105 titles was read and independently judged against your
+literal criteria, then compared against the pipeline's actual decision.
+
+**Findings from the first pass (before fixes) - 3 real, concrete bugs:**
+
+| # | Job title (real, from live data) | Bug | Type |
+|---|---|---|---|
+| 1 | "Node.js Back-End Developer **Sênior** \| Remote" | Portuguese "Sênior" not caught by the English/ASCII-only seniority exclude list | False positive |
+| 2 | "Node.js **Trainee** Developer - Remote" | Regex required the tech word immediately next to "Developer"; the qualifier word "Trainee" in between broke the match | False negative |
+| 3 | "React **/ Angular** Developer" | Same adjacency bug - a second technology name in between broke the match | False negative |
+
+Also found (didn't cause a wrong call in this sample, but would have on a
+different title): **"Vice President" spelled out wasn't caught** by the
+bare `\bvp\b` pattern - both "Area Vice President" titles in the sample
+happened to also fail the positive role-match anyway, but a hypothetical
+"Vice President of Software Engineering" would have slipped through
+undetected before the fix.
+
+**All 3 were fixed** (see Fix 1's `TECH_ROLE_WORD_PAIRS` design and the new
+`_normalize_text()` diacritic-stripping, plus adding `\bvice\s+president\b`
+to the exclude list) and **re-validated against the same 105-job sample**:
+
+| Metric | Before fixes | After fixes |
+|---|---|---|
+| Accepted | 25 | 27 |
+| Confirmed false positives | 1 | **0** |
+| Confirmed false negatives | 2 | **0** |
+| Precision (clear-cut cases) | 96% (24/25) | **100%** |
+| Recall (clear-cut cases) | 92.3% (24/26) | **100%** |
+
+**3 remaining genuine judgment calls** (not counted as errors either way -
+flagged transparently for you to decide, not swept under the rug):
+- "Intermediate Backend Engineer - Analytics Instrumentation" and
+  "Intermediate Fullstack Engineer - Data Products" - "Intermediate" wasn't
+  in your explicit exclude list (Senior/Lead/Staff/Principal/Manager/
+  Director/Architect) nor your explicit include list (0-2/1-2 years), so it
+  defaults to accepted. If you want strictly 0-2 years only, add
+  `r"\bintermediate\b"` and `r"\bmid[\s-]?level\b"` to
+  `EXCLUDE_SENIORITY_PATTERNS` in `src/scorer.py`.
+- "React Native Developer (Wallet team)" - now accepted as a side effect of
+  fixing the adjacency bug (Fix 2 above): it genuinely contains both "react"
+  and "developer" as separate words. React Native is mobile development
+  using React - adjacent to, but not identical to, the "React Developer"
+  (web) role you listed. Your resume doesn't show explicit React Native/
+  mobile experience. If you don't want mobile roles, add a
+  `r"react\s+native"` check to `EXCLUDE_INDUSTRY_PATTERNS` (or a new
+  exclude group) to filter it back out.
+
+All 78 rejected jobs in the sample were manually confirmed correct
+(Sales/Marketing/HR/Account Executive/Customer Success postings, Senior/
+Staff/Lead/Director/Manager/VP titles, and non-target disciplines like
+DevOps/Data/ML/Security/QA/SRE Engineer, Paralegal, Analyst roles).
+
+### Tests
+
+25 new/rewritten tests added across `tests/test_scorer.py` (role-gate
+acceptance/rejection for every category, the 3 validation-driven regression
+tests, weighted-score ordering, full-pipeline + audit-log correctness),
+`tests/test_filters.py` (worldwide location filtering, widened remote
+phrases, messy remote-location-string formats), `tests/test_job_collector.py`
+(multi-keyword search + cross-source dedup), and `tests/test_notifier.py`/
+`tests/test_main.py` updated for the new job schema and pipeline shape.
+**Full suite: 67/67 passing.** A full real end-to-end `main.py` run (all 14
+queries x 19 countries) was also executed to confirm the production
+configuration works, not just the unit tests.
+
+### Recommendations for further improvement
+
+1. **Adzuna-unreachable countries** (Sweden, Norway, Denmark, Finland,
+   Ireland, UAE, Saudi Arabia, Japan, South Korea, Luxembourg) have no
+   dedicated search coverage - consider adding a region-specific source
+   (e.g. a Gulf-region job board, a Nordic job board) if these countries
+   matter enough to justify the integration work.
+2. **Company reputation** isn't scored at all (no real data source
+   available). A Glassdoor/LinkedIn-follower-count/Crunchbase API
+   integration could fill this in later, but it's a genuinely new
+   integration, not a quick addition.
+3. **Multi-language support is currently just diacritic-stripping**, which
+   fixed the one real case found ("Sênior") but wouldn't catch a fully
+   different-language word for "senior" (e.g. German "erfahren"). True
+   multi-language semantic matching would benefit from an LLM/translation
+   step - a bigger change than a rule-based fix, and one that would revisit
+   the earlier "no LLM" decision.
+4. **"Intermediate"/"mid-level" and "React Native" are currently accepted**
+   by default (see the two judgment calls above) - decide if you want them
+   excluded and I can add that in a follow-up.
+5. **Monitor Adzuna's actual rate limit** once this runs on the new 266-
+   call/run, 12-hour schedule for real - if it starts failing/rate-limiting
+   in practice, the per-country try/except already logs and skips
+   gracefully, but the schedule or query count may need tightening further.

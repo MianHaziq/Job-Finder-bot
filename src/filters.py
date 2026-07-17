@@ -1,14 +1,21 @@
 """
-Module 5: Date & Country Filter.
+Module 5/6: Date, Location & Visa/Relocation Filter.
 
 Filters the combined job list (from job_collector.py) down to:
 - Posted within the last 7 days.
-- Country = Pakistan, OR one of the target international regions
-  (Europe, USA, Australia, Canada, New Zealand).
+- Location handling is worldwide by design (no country allow-list): a job
+  is kept if it's in Pakistan (no relocation needed), OR is genuinely
+  remote, OR explicitly mentions visa sponsorship / relocation assistance.
+  Everything else (an onsite job, anywhere in the world, with no
+  remote/relocation signal at all) is dropped, since it's not something a
+  Pakistan-based applicant could actually take without sponsorship.
 
-Each surviving job is tagged "relocation_required": False for Pakistan,
-True for everything else (used by filters.py's next stage, the visa
-keyword filter, and by the Telegram digest).
+Earlier versions of this filter used a hardcoded allow-list of ~15
+countries (Europe/USA/Australia/Canada/NZ) and dropped anything else - that
+silently excluded genuinely good remote/relocation-sponsored jobs in the
+UAE, Singapore, Sweden, Japan, etc. purely because their country string
+wasn't on the list. Removed in favor of the remote/relocation-signal gate
+below, which works regardless of country.
 """
 import json
 import re
@@ -21,33 +28,16 @@ OUTPUT_PATH = PROJECT_ROOT / "data" / "jobs_filtered.json"
 
 MAX_AGE_DAYS = 7
 
-# Lowercased country codes/names that count as "Pakistan" or a target
-# international region. Job sources are inconsistent about whether they give
-# a 2-letter code ("de") or a full name ("Germany"), so both are listed.
 PAKISTAN_TOKENS = {"pk", "pakistan"}
 
-TARGET_COUNTRY_TOKENS = {
-    # USA / UK / Canada / Australia / New Zealand
-    "us", "usa", "united states", "united states of america",
-    "gb", "uk", "united kingdom",
-    "ca", "canada",
-    "au", "australia",
-    "nz", "new zealand",
-    # Europe
-    "de", "germany", "deutschland",
-    "fr", "france",
-    "nl", "netherlands", "the netherlands",
-    "at", "austria",
-    "es", "spain",
-    "it", "italy",
-    "pl", "poland",
-    "be", "belgium",
-    "ch", "switzerland",
-    "europe",  # Arbeitnow's fallback when no specific country is given
-}
+# Explicit remote-status phrases beyond the bare word "remote" (which
+# job_collector.py's _looks_remote already checks against title/location).
+# These are checked against the full description text too.
+REMOTE_PHRASES = [
+    "remote", "work from home", "fully remote", "remote worldwide",
+    "remote-first", "remote first",
+]
 
-# Module 6: Visa/Relocation Keyword Filter (kept in this file per the
-# architecture doc, which groups date/country/visa filtering together).
 VISA_KEYWORDS = [
     "visa sponsorship", "visa sponsor", "sponsor visa", "sponsors visa",
     "sponsorship available", "will sponsor", "provide sponsorship",
@@ -55,6 +45,7 @@ VISA_KEYWORDS = [
     "relocation provided", "provide relocation", "open to relocation",
     "relocation offered", "work permit", "visa support",
     "immigration support", "eligible for visa sponsorship", "visa agency",
+    "international applicants welcome",
 ]
 
 # If one of these phrases appears shortly before a keyword match, the match
@@ -95,42 +86,19 @@ def _contains_token(token: str, text: str) -> bool:
     return re.search(pattern, text) is not None
 
 
-def classify_country(country: str) -> str:
-    """Returns "pakistan", "target", or "other" for a raw country string.
-
-    Remote listings often don't follow a clean "City, Country" format -
-    e.g. Stripe/Airbnb's Greenhouse boards use "US-Remote", "Remote in the
-    US", "USA - Remote", etc. An exact match against the whole string would
-    miss all of these and silently drop otherwise-good remote jobs, so this
-    searches for any known token as a whole word anywhere in the string
-    instead of requiring an exact match.
-    """
+def is_pakistan(country: str) -> bool:
     text = (country or "").strip().lower()
-    if not text:
-        return "other"
-    if any(_contains_token(token, text) for token in PAKISTAN_TOKENS):
-        return "pakistan"
-    if any(_contains_token(token, text) for token in TARGET_COUNTRY_TOKENS):
-        return "target"
-    return "other"
+    return any(_contains_token(token, text) for token in PAKISTAN_TOKENS)
 
 
-def filter_by_date(jobs: list, max_age_days: int = MAX_AGE_DAYS) -> list:
-    return [job for job in jobs if is_recent(job, max_age_days)]
-
-
-def filter_by_country(jobs: list) -> list:
-    """Keeps only Pakistan/target-region jobs, tagging each with
-    relocation_required (False for Pakistan, True otherwise)."""
-    kept = []
-    for job in jobs:
-        classification = classify_country(job.get("country", ""))
-        if classification == "other":
-            continue
-        tagged = dict(job)
-        tagged["relocation_required"] = classification != "pakistan"
-        kept.append(tagged)
-    return kept
+def is_remote_job(job: dict) -> bool:
+    """True if the job is remote, from its own is_remote flag (set in
+    job_collector.py from title/location) or from any of the wider remote
+    phrases appearing in the full description."""
+    if job.get("is_remote"):
+        return True
+    text = f"{job.get('title', '')} {job.get('location', '')} {job.get('description', '')}".lower()
+    return any(phrase in text for phrase in REMOTE_PHRASES)
 
 
 def mentions_visa_or_relocation(description: str) -> bool:
@@ -151,27 +119,34 @@ def mentions_visa_or_relocation(description: str) -> bool:
     return False
 
 
-def filter_by_visa_keywords(jobs: list) -> list:
-    """Pakistan jobs (relocation_required=False) skip this filter entirely,
-    since no relocation is needed. Genuinely remote jobs (is_remote=True)
-    also skip it - a fully remote role doesn't require physically relocating
-    or being sponsored a visa, regardless of which country it's listed
-    under. Everything else is only kept if it genuinely mentions
-    visa/relocation support in its description."""
+def filter_by_date(jobs: list, max_age_days: int = MAX_AGE_DAYS) -> list:
+    return [job for job in jobs if is_recent(job, max_age_days)]
+
+
+def filter_by_location(jobs: list) -> list:
+    """Worldwide by design: keeps a job if it's in Pakistan (no relocation
+    needed), genuinely remote, or explicitly offers visa/relocation support -
+    regardless of which country it's listed under. Tags each surviving job
+    with relocation_required (False for Pakistan) and is_remote."""
     kept = []
     for job in jobs:
-        if not job.get("relocation_required", True) or job.get("is_remote"):
-            kept.append(job)
+        pakistan = is_pakistan(job.get("country", ""))
+        remote = is_remote_job(job)
+        relocation_offered = mentions_visa_or_relocation(job.get("description", ""))
+
+        if not (pakistan or remote or relocation_offered):
             continue
-        if mentions_visa_or_relocation(job.get("description", "")):
-            kept.append(job)
+
+        tagged = dict(job)
+        tagged["relocation_required"] = not pakistan
+        tagged["is_remote"] = remote
+        tagged["relocation_offered"] = relocation_offered
+        kept.append(tagged)
     return kept
 
 
 def apply_filters(jobs: list, max_age_days: int = MAX_AGE_DAYS) -> list:
-    date_filtered = filter_by_date(jobs, max_age_days)
-    country_filtered = filter_by_country(date_filtered)
-    return filter_by_visa_keywords(country_filtered)
+    return filter_by_location(filter_by_date(jobs, max_age_days))
 
 
 def main():
@@ -182,23 +157,23 @@ def main():
         jobs = json.load(f)
 
     after_date = filter_by_date(jobs)
-    after_country = filter_by_country(after_date)
-    after_visa = filter_by_visa_keywords(after_country)
+    after_location = filter_by_location(after_date)
 
     print(f"Collected: {len(jobs)}")
     print(f"After date filter (<= {MAX_AGE_DAYS} days): {len(after_date)}")
-    print(f"After country filter (Pakistan + target regions): {len(after_country)}")
-    print(f"After visa/relocation keyword filter: {len(after_visa)}")
+    print(f"After location filter (Pakistan / remote / relocation-sponsored, worldwide): {len(after_location)}")
 
-    pakistan_count = sum(1 for j in after_visa if not j["relocation_required"])
-    target_count = len(after_visa) - pakistan_count
+    pakistan_count = sum(1 for j in after_location if not j["relocation_required"])
+    remote_count = sum(1 for j in after_location if j["is_remote"])
+    relocation_count = sum(1 for j in after_location if j["relocation_offered"] and not j["is_remote"])
     print(f"  Pakistan (no relocation needed): {pakistan_count}")
-    print(f"  Target regions (visa/relocation confirmed): {target_count}")
+    print(f"  Remote (any country): {remote_count}")
+    print(f"  Onsite/hybrid with relocation sponsorship: {relocation_count}")
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-        json.dump(after_visa, f, indent=2)
-    print(f"\nSaved {len(after_visa)} jobs to {OUTPUT_PATH}")
+        json.dump(after_location, f, indent=2)
+    print(f"\nSaved {len(after_location)} jobs to {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

@@ -22,23 +22,25 @@ MAX_MESSAGE_CHARS = 3500
 
 
 def format_job(job: dict) -> str:
+    # Priority order per the project goal: remote (any country) first, then
+    # onsite/hybrid with relocation sponsorship, then Pakistan (no
+    # relocation needed since no relocation is required there).
     if job.get("is_remote"):
         relocation_note = "Remote - no relocation needed"
     elif job.get("relocation_required"):
-        relocation_note = "Relocation/visa needed"
+        relocation_note = "Relocation/visa sponsorship offered"
     else:
         relocation_note = "No relocation needed (Pakistan)"
     title = html.escape(job.get("title", ""))
     company = html.escape(job.get("company", ""))
     country = html.escape(job.get("country", ""))
     url = job.get("url", "")
-    matched_count = job.get("score", 0)
-    seniority_note = "\n&#9888; May require more seniority than your experience" if job.get("seniority_mismatch") else ""
+    score = job.get("score", 0)
+    junior_note = " | Junior-labeled" if job.get("is_junior_labeled") else ""
     return (
         f"<b>{title}</b>\n"
         f"{company} - {country}\n"
-        f"{relocation_note} | Matched skills: {matched_count}"
-        f"{seniority_note}\n"
+        f"{relocation_note} | Score: {score:.1f}{junior_note}\n"
         f'<a href="{url}">View &amp; Apply</a>'
     )
 

@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import filters
 
 
-def _job(days_old=0, country="us", date_style="z"):
+def _job(days_old=0, country="us", description="", is_remote=False, date_style="z"):
     posted = datetime.now(timezone.utc) - timedelta(days=days_old)
     if date_style == "z":
         date_str = posted.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -20,7 +20,8 @@ def _job(days_old=0, country="us", date_style="z"):
         "country": country,
         "date_posted": date_str,
         "url": "https://example.com/job/1",
-        "description": "desc",
+        "description": description,
+        "is_remote": is_remote,
         "source": "test",
     }
 
@@ -39,26 +40,11 @@ def test_is_recent_keeps_jobs_within_seven_days_and_drops_older():
     assert filters.is_recent(_job(days_old=8)) is False
 
 
-def test_classify_country_recognizes_codes_and_names():
-    assert filters.classify_country("pk") == "pakistan"
-    assert filters.classify_country("Pakistan") == "pakistan"
-    assert filters.classify_country("us") == "target"
-    assert filters.classify_country("United States") == "target"
-    assert filters.classify_country("Germany ") == "target"
-    assert filters.classify_country("Brazil") == "other"
-
-
-def test_classify_country_recognizes_messy_remote_location_formats():
-    """Real bug found in production: Stripe/Airbnb's Greenhouse boards don't
-    use a clean "City, Country" format for remote roles, so an exact-match
-    check against the whole string was silently dropping otherwise-good
-    remote US/Canada jobs."""
-    assert filters.classify_country("US-Remote") == "target"
-    assert filters.classify_country("Remote in the US") == "target"
-    assert filters.classify_country("USA - Remote") == "target"
-    assert filters.classify_country("Remote, Italy") == "target"
-    assert filters.classify_country("China - Remote") == "other"  # not a target region
-    assert filters.classify_country("") == "other"
+def test_is_pakistan_recognizes_codes_and_names():
+    assert filters.is_pakistan("pk") is True
+    assert filters.is_pakistan("Pakistan") is True
+    assert filters.is_pakistan("us") is False
+    assert filters.is_pakistan("") is False
 
 
 def test_filter_by_date_drops_stale_jobs():
@@ -67,34 +53,11 @@ def test_filter_by_date_drops_stale_jobs():
     assert len(result) == 1
 
 
-def test_filter_by_country_tags_relocation_required():
-    jobs = [_job(country="pk"), _job(country="us"), _job(country="brazil")]
-    result = filters.filter_by_country(jobs)
-    assert len(result) == 2  # brazil dropped
-    by_country = {j["country"]: j["relocation_required"] for j in result}
-    assert by_country["pk"] is False
-    assert by_country["us"] is True
-
-
-def test_apply_filters_combines_date_country_and_visa_keywords():
-    keep = _job(days_old=1, country="us")
-    keep["description"] = "We offer visa sponsorship for this role."
-    stale = _job(days_old=10, country="us")
-    stale["description"] = "We offer visa sponsorship for this role."
-    wrong_country = _job(days_old=1, country="brazil")
-    wrong_country["description"] = "We offer visa sponsorship for this role."
-    no_keyword = _job(days_old=1, country="us")
-    no_keyword["description"] = "Great team, no mention of relocation."
-
-    result = filters.apply_filters([keep, stale, wrong_country, no_keyword])
-    assert len(result) == 1
-    assert result[0]["country"] == "us"
-
-
 def test_mentions_visa_or_relocation_matches_genuine_phrasing():
     assert filters.mentions_visa_or_relocation("We offer visa sponsorship for this role.") is True
     assert filters.mentions_visa_or_relocation("Relocation package included for international hires.") is True
     assert filters.mentions_visa_or_relocation("We're open to relocation and providing support with our visa agency.") is True
+    assert filters.mentions_visa_or_relocation("International applicants welcome to apply.") is True
 
 
 def test_mentions_visa_or_relocation_rejects_negated_phrasing():
@@ -107,42 +70,56 @@ def test_mentions_visa_or_relocation_rejects_unrelated_text():
     assert filters.mentions_visa_or_relocation("") is False
 
 
-def test_filter_by_visa_keywords_pakistan_jobs_skip_the_filter():
-    jobs = [_job(country="pk")]
-    jobs[0]["relocation_required"] = False
-    jobs[0]["description"] = "No mention of visa at all."
-    result = filters.filter_by_visa_keywords(jobs)
+def test_is_remote_job_widened_phrases_beyond_bare_remote():
+    assert filters.is_remote_job({"is_remote": False, "title": "", "location": "",
+                                   "description": "This is a fully remote position."}) is True
+    assert filters.is_remote_job({"is_remote": False, "title": "", "location": "",
+                                   "description": "Work from home opportunity."}) is True
+    assert filters.is_remote_job({"is_remote": False, "title": "", "location": "",
+                                   "description": "Remote worldwide, any timezone."}) is True
+    assert filters.is_remote_job({"is_remote": False, "title": "", "location": "",
+                                   "description": "Standard office role."}) is False
+    assert filters.is_remote_job({"is_remote": True, "title": "", "location": "", "description": ""}) is True
+
+
+def test_filter_by_location_keeps_pakistan_jobs_with_no_signal_needed():
+    jobs = [_job(country="pk", description="no mention of anything special")]
+    result = filters.filter_by_location(jobs)
     assert len(result) == 1
+    assert result[0]["relocation_required"] is False
 
 
-def test_filter_by_visa_keywords_drops_target_jobs_without_keywords():
-    job_with_keyword = _job(country="us")
-    job_with_keyword["relocation_required"] = True
-    job_with_keyword["description"] = "Visa sponsorship available for the right candidate."
-
-    job_without_keyword = _job(country="us")
-    job_without_keyword["relocation_required"] = True
-    job_without_keyword["description"] = "Great team, no mention of relocation."
-
-    result = filters.filter_by_visa_keywords([job_with_keyword, job_without_keyword])
-    assert len(result) == 1
-    assert "sponsorship" in result[0]["description"].lower()
-
-
-def test_filter_by_visa_keywords_remote_jobs_skip_the_filter():
-    """A genuinely remote role doesn't require relocation or visa
-    sponsorship regardless of which country it's listed under, so it
-    should pass through even with no visa/relocation mention at all."""
-    remote_job = _job(country="us")
-    remote_job["relocation_required"] = True
-    remote_job["is_remote"] = True
-    remote_job["description"] = "No mention of visa or relocation at all."
-
-    non_remote_job = _job(country="us")
-    non_remote_job["relocation_required"] = True
-    non_remote_job["is_remote"] = False
-    non_remote_job["description"] = "No mention of visa or relocation at all."
-
-    result = filters.filter_by_visa_keywords([remote_job, non_remote_job])
+def test_filter_by_location_keeps_remote_jobs_from_any_country_no_signal_needed():
+    """Worldwide by design: a genuinely remote job needs no visa/relocation
+    mention at all, and is kept regardless of which country it's listed
+    under (e.g. UAE, Japan - not on any old allow-list)."""
+    jobs = [_job(country="United Arab Emirates", is_remote=True, description="no visa mention here")]
+    result = filters.filter_by_location(jobs)
     assert len(result) == 1
     assert result[0]["is_remote"] is True
+
+
+def test_filter_by_location_keeps_onsite_jobs_anywhere_if_relocation_offered():
+    """The old version required the country to be on a fixed allow-list -
+    this confirms that requirement is gone: Sweden/Japan/UAE etc. all work
+    now as long as relocation/visa is genuinely offered."""
+    for country in ["Sweden", "Japan", "United Arab Emirates", "South Korea"]:
+        jobs = [_job(country=country, description="Visa sponsorship available for this role.")]
+        result = filters.filter_by_location(jobs)
+        assert len(result) == 1, f"expected {country} job to survive with visa sponsorship mentioned"
+
+
+def test_filter_by_location_drops_onsite_jobs_anywhere_with_no_signal():
+    jobs = [_job(country="us", description="Standard office role, no relocation mentioned.")]
+    result = filters.filter_by_location(jobs)
+    assert len(result) == 0
+
+
+def test_apply_filters_combines_date_and_location():
+    keep = _job(days_old=1, country="us", description="visa sponsorship offered")
+    stale = _job(days_old=10, country="us", description="visa sponsorship offered")
+    no_signal = _job(days_old=1, country="us", description="no mention of relocation")
+    remote_ok = _job(days_old=1, country="Sweden", is_remote=True, description="")
+
+    result = filters.apply_filters([keep, stale, no_signal, remote_ok])
+    assert len(result) == 2

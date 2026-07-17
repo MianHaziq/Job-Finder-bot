@@ -149,9 +149,41 @@ def test_fetch_greenhouse_jobs_returns_real_results():
     assert jobs[0].get("title")
 
 
+def test_dedupe_by_url_removes_duplicates_keeps_order():
+    jobs = [
+        {"url": "https://x.com/1", "title": "A"},
+        {"url": "https://x.com/2", "title": "B"},
+        {"url": "https://x.com/1", "title": "A duplicate"},
+    ]
+    result = jc._dedupe_by_url(jobs)
+    assert len(result) == 2
+    assert [j["title"] for j in result] == ["A", "B"]
+
+
+@pytest.mark.skipif(
+    not (os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY")),
+    reason="Adzuna API credentials not set in .env",
+)
+def test_collect_adzuna_multi_accepts_multiple_keywords_and_dedupes():
+    # Deliberately tiny keyword/country lists here - the real pipeline uses
+    # all 14 queries x 19 countries, but a test shouldn't burn that much of
+    # the API quota just to confirm the mechanism works.
+    jobs = jc.collect_adzuna_multi(
+        keywords=["software engineer", "software developer"],
+        app_id=os.getenv("ADZUNA_APP_ID"),
+        app_key=os.getenv("ADZUNA_APP_KEY"),
+        countries=["gb"],
+    )
+    urls = [job["url"] for job in jobs]
+    assert len(urls) == len(set(urls)), "expected no duplicate URLs after multi-keyword search"
+
+
 def test_collect_all_merges_multiple_sources():
+    # Small keyword/country subset for the same reason as above - this test
+    # verifies collect_all's merge/dedupe logic across sources, not search
+    # breadth (that's covered by the module's own constants + manual runs).
     jobs = jc.collect_all(
-        keyword="software engineer",
+        keywords=["software engineer"],
         app_id=os.getenv("ADZUNA_APP_ID", ""),
         app_key=os.getenv("ADZUNA_APP_KEY", ""),
     )

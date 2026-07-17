@@ -9,6 +9,11 @@ url, description, source.
 
 Pakistan is intentionally NOT covered here (Adzuna doesn't support it, and
 Rozee.pk has no public API - decided to skip scraping it for v1).
+
+Adzuna is queried with multiple search-phrase variations (SEARCH_QUERIES)
+across every country Adzuna supports (ADZUNA_ALL_COUNTRIES), not a single
+keyword/country subset - see PROJECT_SETUP.md for why, and the resulting
+schedule trade-off (this multiplies API call volume substantially).
 """
 import html
 import json
@@ -25,11 +30,32 @@ DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "data" / "jobs_raw.json"
 
 ADZUNA_BASE_URL = "https://api.adzuna.com/v1/api/jobs/{country}/search/{page}"
 
-# Adzuna country codes that overlap with the target regions from
-# docs/1-project-goal.md (Europe, USA, Australia, Canada, New Zealand).
-ADZUNA_TARGET_COUNTRIES = [
-    "us", "gb", "ca", "au", "nz",           # USA, UK, Canada, Australia, New Zealand
-    "de", "fr", "nl", "at", "es", "it", "pl", "be", "ch",  # Europe
+# Every country Adzuna's API supports (confirmed directly against their API's
+# own "UNSUPPORTED_COUNTRY" error message - there is no broader worldwide
+# option, this is the full list). Several countries from the target list
+# (Sweden, Norway, Denmark, Finland, Ireland, UAE, Saudi Arabia, Japan, South
+# Korea, Luxembourg) are NOT reachable via Adzuna at all - a real, documented
+# limitation. Arbeitnow/Greenhouse aren't restricted to a country list, so
+# jobs from those countries can still surface via those two sources; a
+# dedicated source for the Adzuna-unreachable countries is a good future
+# addition (see the analysis report for recommendations).
+ADZUNA_ALL_COUNTRIES = [
+    "us", "gb", "ca", "au", "nz", "de", "fr", "nl", "at", "es", "it", "pl",
+    "be", "ch", "br", "in", "mx", "sg", "za",
+]
+
+# Multiple search-phrase variations instead of one - covers the different
+# ways the same kind of role gets titled (e.g. Adzuna's own search wouldn't
+# necessarily surface a "MERN Stack Developer" posting from a bare
+# "software engineer" query). Combined with all countries above, this is a
+# large number of API calls per run - see PROJECT_SETUP.md for the resulting
+# schedule trade-off.
+SEARCH_QUERIES = [
+    "Associate Software Engineer", "Junior Software Engineer", "Software Engineer I",
+    "Graduate Software Engineer", "MERN Stack Developer", "React Developer",
+    "Node.js Developer", "Full Stack Developer", "Full Stack Engineer",
+    "Software Developer", "Backend Developer", "Frontend Developer",
+    "Web Developer", "Junior Project Manager",
 ]
 
 ARBEITNOW_URL = "https://www.arbeitnow.com/api/job-board-api"
@@ -92,18 +118,34 @@ def collect_adzuna(country: str, keyword: str, app_id: str, app_key: str) -> lis
     return [normalize_adzuna_job(job, country) for job in raw_jobs]
 
 
-def collect_adzuna_multi(keyword: str, app_id: str, app_key: str,
-                          countries: list = None) -> list:
-    """Queries Adzuna once per target country. A single country failing
-    (rate limit, timeout, etc.) is logged and skipped - the rest still run."""
-    countries = countries or ADZUNA_TARGET_COUNTRIES
+def _dedupe_by_url(jobs: list) -> list:
+    seen_urls = set()
+    deduped = []
+    for job in jobs:
+        url = job.get("url", "")
+        if url and url in seen_urls:
+            continue
+        seen_urls.add(url)
+        deduped.append(job)
+    return deduped
+
+
+def collect_adzuna_multi(keywords, app_id: str, app_key: str, countries: list = None) -> list:
+    """Queries Adzuna once per (country, keyword) combination. A single
+    combination failing (rate limit, timeout, etc.) is logged and skipped -
+    the rest still run. The same job commonly surfaces under more than one
+    search phrase (e.g. "Software Engineer" and "Software Developer"), so
+    results are deduped by URL before returning."""
+    countries = countries or ADZUNA_ALL_COUNTRIES
+    keywords = [keywords] if isinstance(keywords, str) else keywords
     jobs = []
     for country in countries:
-        try:
-            jobs.extend(collect_adzuna(country, keyword, app_id, app_key))
-        except requests.RequestException as e:
-            print(f"[job_collector] Adzuna failed for country={country}: {e}")
-    return jobs
+        for keyword in keywords:
+            try:
+                jobs.extend(collect_adzuna(country, keyword, app_id, app_key))
+            except requests.RequestException as e:
+                print(f"[job_collector] Adzuna failed for country={country}, keyword='{keyword}': {e}")
+    return _dedupe_by_url(jobs)
 
 
 def fetch_arbeitnow_jobs() -> list:
@@ -178,13 +220,14 @@ def collect_greenhouse_multi(companies: list = None) -> list:
     return jobs
 
 
-def collect_all(keyword: str, app_id: str, app_key: str) -> list:
+def collect_all(keywords, app_id: str, app_key: str) -> list:
     """Merges every source into one combined list. Each source is isolated -
-    one failing entirely (e.g. bad API key) doesn't stop the others."""
+    one failing entirely (e.g. bad API key) doesn't stop the others. Result
+    is deduped by URL across all sources/keywords/countries."""
     jobs = []
 
     try:
-        jobs.extend(collect_adzuna_multi(keyword, app_id, app_key))
+        jobs.extend(collect_adzuna_multi(keywords, app_id, app_key))
     except requests.RequestException as e:
         print(f"[job_collector] Adzuna source failed entirely: {e}")
 
@@ -198,7 +241,7 @@ def collect_all(keyword: str, app_id: str, app_key: str) -> list:
     except requests.RequestException as e:
         print(f"[job_collector] Greenhouse source failed entirely: {e}")
 
-    return jobs
+    return _dedupe_by_url(jobs)
 
 
 def main():
@@ -208,9 +251,7 @@ def main():
     if not app_id or not app_key:
         raise SystemExit("ADZUNA_APP_ID / ADZUNA_APP_KEY are not set in .env")
 
-    keyword = "software engineer"
-
-    jobs = collect_all(keyword, app_id, app_key)
+    jobs = collect_all(SEARCH_QUERIES, app_id, app_key)
 
     by_source = {}
     for job in jobs:

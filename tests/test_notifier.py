@@ -7,15 +7,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import notifier
 
 
-def _job(title="Backend Engineer", relocation=True, score=3, seniority_mismatch=False, is_remote=False):
+def _job(title="Backend Engineer", relocation=True, score=15.5, is_remote=False, is_junior_labeled=False):
     return {
         "title": title,
         "company": "Acme Corp",
         "country": "Germany",
         "relocation_required": relocation,
         "score": score,
-        "seniority_mismatch": seniority_mismatch,
         "is_remote": is_remote,
+        "is_junior_labeled": is_junior_labeled,
         "url": "https://example.com/job/1",
     }
 
@@ -25,9 +25,9 @@ def test_format_job_includes_all_required_fields():
     assert "Backend Engineer" in text
     assert "Acme Corp" in text
     assert "Germany" in text
-    assert "Matched skills: 3" in text
+    assert "Score: 15.5" in text
     assert "https://example.com/job/1" in text
-    assert "Relocation/visa needed" in text
+    assert "Relocation/visa sponsorship offered" in text
 
 
 def test_format_job_pakistan_job_shows_no_relocation_note():
@@ -37,21 +37,21 @@ def test_format_job_pakistan_job_shows_no_relocation_note():
 
 def test_format_job_remote_job_shows_remote_note_even_if_relocation_required():
     """A remote job listed under a target country would otherwise say
-    "Relocation/visa needed", which is misleading - remote work doesn't
-    require relocating anywhere."""
+    "Relocation/visa sponsorship offered", which is misleading - remote work
+    doesn't require relocating anywhere."""
     text = notifier.format_job(_job(relocation=True, is_remote=True))
     assert "Remote - no relocation needed" in text
-    assert "Relocation/visa needed" not in text
+    assert "Relocation/visa sponsorship offered" not in text
 
 
-def test_format_job_shows_seniority_warning_when_flagged():
-    text = notifier.format_job(_job(seniority_mismatch=True))
-    assert "May require more seniority" in text
+def test_format_job_shows_junior_labeled_note_when_flagged():
+    text = notifier.format_job(_job(is_junior_labeled=True))
+    assert "Junior-labeled" in text
 
 
-def test_format_job_omits_seniority_warning_when_not_flagged():
-    text = notifier.format_job(_job(seniority_mismatch=False))
-    assert "May require more seniority" not in text
+def test_format_job_omits_junior_labeled_note_when_not_flagged():
+    text = notifier.format_job(_job(is_junior_labeled=False))
+    assert "Junior-labeled" not in text
 
 
 def test_format_job_escapes_html_special_characters():

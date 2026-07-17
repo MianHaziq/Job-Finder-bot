@@ -39,7 +39,6 @@ def test_run_marks_jobs_seen_only_after_successful_send(
     mock_job_collector.collect_all.return_value = [{"title": "Job"}]
     mock_filters.apply_filters.return_value = [{"title": "Job"}]
     mock_scorer.score_jobs.return_value = [{"title": "Job", "url": "https://x.com/1", "score": 2}]
-    mock_scorer.filter_by_minimum_score.return_value = [{"title": "Job", "url": "https://x.com/1", "score": 2}]
     mock_storage.init_db.return_value = MagicMock()
     mock_storage.get_new_jobs.return_value = [{"title": "Job", "url": "https://x.com/1", "score": 2}]
     mock_notifier.send_digest.return_value = 1
@@ -66,7 +65,6 @@ def test_run_does_not_mark_jobs_seen_when_send_fails(
     mock_job_collector.collect_all.return_value = [{"title": "Job"}]
     mock_filters.apply_filters.return_value = [{"title": "Job"}]
     mock_scorer.score_jobs.return_value = [{"title": "Job", "url": "https://x.com/1", "score": 2}]
-    mock_scorer.filter_by_minimum_score.return_value = [{"title": "Job", "url": "https://x.com/1", "score": 2}]
     mock_storage.init_db.return_value = MagicMock()
     mock_storage.get_new_jobs.return_value = [{"title": "Job", "url": "https://x.com/1", "score": 2}]
     mock_notifier.send_digest.side_effect = Exception("network unreachable")
@@ -90,7 +88,6 @@ def test_run_skips_notification_when_no_new_jobs(
     mock_job_collector.collect_all.return_value = []
     mock_filters.apply_filters.return_value = []
     mock_scorer.score_jobs.return_value = []
-    mock_scorer.filter_by_minimum_score.return_value = []
     mock_storage.init_db.return_value = MagicMock()
     mock_storage.get_new_jobs.return_value = []
 

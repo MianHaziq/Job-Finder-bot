@@ -29,7 +29,6 @@ import storage
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RESUME_PROFILE_PATH = PROJECT_ROOT / "data" / "resume_profile.json"
-SEARCH_KEYWORD = "software engineer"
 
 
 def run() -> None:
@@ -57,18 +56,17 @@ def run() -> None:
           f"{resume_profile['years_of_experience']} years experience")
 
     print("[2/6] Collecting jobs from all sources...")
-    raw_jobs = job_collector.collect_all(SEARCH_KEYWORD, adzuna_app_id, adzuna_app_key)
+    raw_jobs = job_collector.collect_all(job_collector.SEARCH_QUERIES, adzuna_app_id, adzuna_app_key)
     print(f"      Collected {len(raw_jobs)} jobs")
 
-    print("[3/6] Filtering by date, country, and visa/relocation keywords...")
+    print("[3/6] Filtering by date and location (Pakistan / remote / relocation-sponsored, worldwide)...")
     filtered_jobs = filters.apply_filters(raw_jobs)
     print(f"      {len(filtered_jobs)} jobs survived filtering")
 
-    print("[4/6] Scoring jobs against resume...")
-    scored_jobs = scorer.score_jobs(filtered_jobs, resume_profile)
-    relevant_jobs = scorer.filter_by_minimum_score(scored_jobs)
-    print(f"      {len(relevant_jobs)} jobs have at least one matched skill "
-          f"({len(scored_jobs) - len(relevant_jobs)} dropped as irrelevant)")
+    print("[4/6] Evaluating role relevance and scoring...")
+    relevant_jobs = scorer.score_jobs(filtered_jobs, resume_profile)
+    print(f"      {len(relevant_jobs)} jobs passed the role-relevance gate "
+          f"({len(filtered_jobs) - len(relevant_jobs)} rejected - see data/evaluation_log.jsonl for reasons)")
 
     print("[5/6] Checking for duplicates already sent...")
     conn = storage.init_db()
