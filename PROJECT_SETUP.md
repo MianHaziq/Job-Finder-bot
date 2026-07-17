@@ -1184,3 +1184,48 @@ configuration works, not just the unit tests.
    call/run, 12-hour schedule for real - if it starts failing/rate-limiting
    in practice, the per-country try/except already logs and skips
    gracefully, but the schedule or query count may need tightening further.
+
+---
+
+## Follow-up — Five New Free Job Sources (Remotive, Jobicy, RemoteOK, Himalayas, The Muse)
+
+### Why
+You asked whether more job APIs exist - specifically mentioning Indeed.
+The honest answer on the big names: **Indeed shut down its public
+Publisher API** (no new signups for years) and **LinkedIn has no public
+jobs API** - the only legitimate route to their listings is a licensed
+aggregator like JSearch on RapidAPI (your existing RapidAPI key returned
+"endpoint does not exist," which is RapidAPI's response when a key isn't
+*subscribed* to that specific API - fixable by subscribing to JSearch's
+free tier on rapidapi.com; the bot doesn't integrate it until that's done).
+
+Instead, five free no-API-key boards were live-tested and all verified
+working, and you chose to integrate **all of them**:
+
+| Source | Type | Notable data quality |
+|---|---|---|
+| **Remotive** | Remote-only, software-dev category | `candidate_required_location` says where applicants must be based ("Worldwide", "Europe", ...) - the best remote-location data of any source |
+| **Jobicy** | Remote-only, dev industry | Has an explicit `jobLevel` field (not yet used for filtering - the title gate already handles seniority) |
+| **RemoteOK** | Remote-only, tech-heavy | First array element is a legal notice, not a job - explicitly skipped |
+| **Himalayas** | Remote-only | `locationRestrictions` list (empty = worldwide); epoch dates converted to ISO |
+| **The Muse** | General board, 100k+ listings | Fetched pre-filtered to the Software Engineering category, 5 pages (~100 jobs)/run, roughly newest-first |
+
+### How it's wired (`src/job_collector.py`)
+One `normalize_*_job()` + `collect_*()` pair per source, all returning the
+same normalized schema as the existing sources. The four remote-only boards
+hardcode `is_remote=True` - meaning every job from them passes the location
+filter by design, and precision comes entirely from the role-relevance gate
+in `scorer.py` (which is exactly the division of labor the relevance
+overhaul established). `collect_all()` now iterates a list of keyless
+sources, each isolated in its own try/except so one board going down never
+affects the others. All results dedupe by URL across all 8 sources.
+
+### Test & result
+9 new tests (73 total, all passing): unit tests for each normalizer's field
+mapping (including Himalayas' epoch dates + empty-restrictions handling,
+The Muse's nested company/refs structure, RemoteOK's legal-notice skip),
+plus the live-verified collections during development: Remotive 41,
+Jobicy 50, RemoteOK 100, Himalayas 20, The Muse 100 jobs - all with zero
+broken entries. A full production `main.py` run with all 8 sources was also
+executed end-to-end to confirm the whole pipeline works with the expanded
+source list.

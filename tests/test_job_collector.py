@@ -149,6 +149,108 @@ def test_fetch_greenhouse_jobs_returns_real_results():
     assert jobs[0].get("title")
 
 
+def test_normalize_remotive_job_maps_fields_and_hardcodes_remote():
+    raw_job = {
+        "title": "Full Stack Developer",
+        "company_name": "Acme Inc",
+        "candidate_required_location": "Worldwide",
+        "publication_date": "2026-07-16T10:10:51",
+        "url": "https://remotive.com/jobs/123",
+        "description": "<p>React and Node.js</p>",
+    }
+    job = jc.normalize_remotive_job(raw_job)
+    assert job["title"] == "Full Stack Developer"
+    assert job["country"] == "Worldwide"
+    assert job["description"] == "React and Node.js"
+    assert job["is_remote"] is True
+    assert job["source"] == "remotive"
+
+
+def test_normalize_jobicy_job_maps_fields_and_hardcodes_remote():
+    raw_job = {
+        "jobTitle": "React Developer",
+        "companyName": "Acme",
+        "jobGeo": "Anywhere",
+        "pubDate": "2026-07-17T12:50:02+00:00",
+        "url": "https://jobicy.com/jobs/123",
+        "jobDescription": "<p>React role</p>",
+    }
+    job = jc.normalize_jobicy_job(raw_job)
+    assert job["title"] == "React Developer"
+    assert job["country"] == "Anywhere"
+    assert job["is_remote"] is True
+    assert job["source"] == "jobicy"
+
+
+def test_normalize_remoteok_job_maps_position_field_to_title():
+    raw_job = {
+        "position": "Backend Developer",
+        "company": "Acme",
+        "location": "Worldwide",
+        "date": "2026-07-16T20:10:03+00:00",
+        "url": "https://remoteok.com/remote-jobs/123",
+        "description": "<p>Node.js backend</p>",
+    }
+    job = jc.normalize_remoteok_job(raw_job)
+    assert job["title"] == "Backend Developer"
+    assert job["is_remote"] is True
+    assert job["source"] == "remoteok"
+
+
+def test_normalize_himalayas_job_converts_epoch_date_and_empty_restrictions():
+    raw_job = {
+        "title": "Full Stack Engineer",
+        "companyName": "Acme",
+        "locationRestrictions": [],
+        "pubDate": 1700000000,
+        "applicationLink": "https://himalayas.app/jobs/123",
+        "description": "<p>MERN role</p>",
+    }
+    job = jc.normalize_himalayas_job(raw_job)
+    assert job["country"] == "Worldwide"  # empty restrictions = anywhere
+    assert job["date_posted"].startswith("2023-11-14")
+    assert job["is_remote"] is True
+    assert job["source"] == "himalayas"
+
+    restricted = jc.normalize_himalayas_job({**raw_job, "locationRestrictions": ["United States", "Canada"]})
+    assert restricted["country"] == "United States, Canada"
+
+
+def test_normalize_themuse_job_maps_nested_fields_and_detects_remote():
+    raw_job = {
+        "name": "Software Engineer",
+        "company": {"name": "SpaceX"},
+        "locations": [{"name": "Austin, TX"}],
+        "publication_date": "2026-07-14T23:41:10Z",
+        "refs": {"landing_page": "https://themuse.com/jobs/123"},
+        "contents": "<p>Engineering role</p>",
+    }
+    job = jc.normalize_themuse_job(raw_job)
+    assert job["title"] == "Software Engineer"
+    assert job["company"] == "SpaceX"
+    assert job["url"] == "https://themuse.com/jobs/123"
+    assert job["is_remote"] is False
+
+    remote_job = jc.normalize_themuse_job({**raw_job, "locations": [{"name": "Flexible / Remote"}]})
+    assert remote_job["is_remote"] is True
+
+
+def test_collect_remoteok_skips_the_legal_notice_item():
+    """RemoteOK's API returns its legal notice as the first array element -
+    it must never be treated as a job."""
+    import unittest.mock as mock
+    fake_response = mock.MagicMock()
+    fake_response.json.return_value = [
+        {"legal": "...", "last_updated": 123},
+        {"position": "Web Developer", "company": "Acme", "location": "",
+         "date": "2026-07-16T20:10:03+00:00", "url": "https://remoteok.com/1", "description": ""},
+    ]
+    with mock.patch.object(jc.requests, "get", return_value=fake_response):
+        jobs = jc.collect_remoteok()
+    assert len(jobs) == 1
+    assert jobs[0]["title"] == "Web Developer"
+
+
 def test_dedupe_by_url_removes_duplicates_keeps_order():
     jobs = [
         {"url": "https://x.com/1", "title": "A"},
